@@ -1,18 +1,13 @@
 <?php
-/* ========================================================================
-   Plantagotchi – Dashboard multi-pianta (NO AUTH) – versione semplificata
-   - NIENTE aggiornamento automatico periodico
-   - PHP in stile procedurale (nessuna notazione a oggetti)
-   - Per ogni pianta:
-       • intestazione con nome e "stato"
-       • riquadri con ultima misura
-       • sezione "Grafici" (chiusa di default) con 2 grafici:
-           (1) Umidità & Lux  (umidità aria %, umidità suolo ADC, luce lux)
-           (2) Temperatura & Umidità (temperatura °C, umidità aria %)
-   - Dipendenze:
-       • Chart.js via CDN
-       • Endpoint API lato server già disponibili
-   ======================================================================== */
+/* =========================================================================
+   Plantagotchi – Dashboard multi-pianta (NO AUTH)
+   Layout grafici 2 colonne × 2 righe per ogni pianta:
+     [1,1] Temp + Umidità aria + Lux (ultime 24h)
+     [1,2] Temp + Umidità aria + Lux (ultimo mese)
+     [2,1] Umidità suolo (ultime 24h)
+     [2,2] Umidità suolo (ultimo mese)
+   Nessun auto-refresh. Logica client-side con fetch verso API interne.
+   ========================================================================= */
 ?>
 <!doctype html>
 <html lang="it">
@@ -21,13 +16,11 @@
   <title>Plantagotchi – Dashboard</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
-  <!-- Stili minimi, leggibili e senza framework
-       Nota: possono essere adattati alle necessità didattiche -->
   <style>
-    :root { --b: #e4e4e4; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+    :root { --b:#e4e4e4; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:20px; }
     h1 { margin-bottom: 14px; }
-    .plant { border:1px solid var(--b); border-radius:10px; padding:12px; margin-bottom:14px; }
+    .plant { border:1px solid var(--b); border-radius:10px; padding:12px; margin-bottom:16px; }
     .head { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
     .pianta { font-weight:700; }
     .stato  { background:#f6f6f6; border-radius:10px; padding:6px 10px; }
@@ -35,92 +28,71 @@
     .card  { border:1px solid var(--b); border-radius:8px; padding:8px; }
     details { margin-top:10px; border:1px dashed var(--b); border-radius:8px; padding:10px; background:#fafafa; }
     summary { cursor:pointer; font-weight:600; }
+    .charts2x2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:10px; }
+    .chartbox { border:1px solid var(--b); border-radius:8px; padding:8px; }
     .muted { color:#666; font-size:0.9rem; }
-    .chartbox { margin-top:10px; }
   </style>
 
-  <!-- Chart.js: libreria grafici (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-  <h1>Plantagotchi – Pannello multi-pianta (demo semplice)</h1>
-  <div id="plants"><!-- Le sezioni pianta verranno inserite via JS --></div>
+  <h1>Plantagotchi – Pannello multi-pianta</h1>
+  <div id="plants"></div>
 
-  <p class="muted">
-    Nota: questa pagina non si aggiorna in automatico. Per vedere nuovi dati,
-    ricaricare la pagina o chiudere/aprire la sezione "Grafici".
-  </p>
+  <p class="muted">Suggerimento: apri “Grafici” per analizzare l’andamento (nessun aggiornamento automatico).</p>
 
   <script>
-    /* ==============================================================
-       Utility JavaScript (semplici e commentate)
-       ============================================================== */
+    /* -------------------- Utility -------------------- */
+    async function jget(u){ try{ const r=await fetch(u); return await r.json(); } catch(e){ console.error(e); return null; } }
+    function escId(s){ return String(s||'').replace(/[^a-zA-Z0-9_-]/g,'_'); }
+    function fmt(v,unit=""){ if(v===null||v===undefined||isNaN(v))return "—"; const n=+v; return (unit==='lux'?n.toFixed(0):n.toFixed(1))+(unit?(' '+unit):''); }
 
-    // Richiesta JSON con fetch; se fallisce ritorna null
-    async function jget(url){
-      try { const r = await fetch(url); return await r.json(); }
-      catch(e){ console.error("Errore fetch:", e); return null; }
-    }
-
-    // Sanifica una stringa per usarla come parte di un id HTML
-    function escId(s){ return String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_'); }
-
-    // Valuta uno "stato" semplice in stile Tamagotchi con regole didattiche
-    function computeMood(last){
+    // Stato semplice in base alle ultime letture E (se disponibili) ai parametri della specie
+    function mood(last, params){
       if (!last || !last.ts) return "—";
       const msgs = [];
-      const soil = Number(last.umidita_suolo);
-      const lux  = Number(last.luce_lux);
-      const t    = Number(last.temperatura_c);
-      if (!isNaN(soil) && soil < 300) msgs.push("💧 Ho sete");
-      if (!isNaN(lux)  && lux  < 50)  msgs.push("🌑 Troppa ombra");
-      if (!isNaN(t)    && t    > 30)  msgs.push("🔥 Caldo");
+      const t = +last.temperatura_c, ha = +last.umidita_aria, s = +last.umidita_suolo, lx = +last.luce_lux;
+      // Soglie "grezze"
+      if (!isNaN(s) && s < 300) msgs.push("💧 Ho sete");
+      if (!isNaN(lx) && lx < 50) msgs.push("🌑 Troppa ombra");
+      if (!isNaN(t) && t > 30) msgs.push("🔥 Caldo");
+      // Soglie specie (se presenti)
+      if (params && params.species){
+        if (!isNaN(t) && params.temp_min!==null && t < +params.temp_min) msgs.push("❄️ Troppo freddo");
+        if (!isNaN(t) && params.temp_max!==null && t > +params.temp_max) msgs.push("🔥 Troppo caldo");
+        if (!isNaN(ha) && params.hum_air_min!==null && ha < +params.hum_air_min) msgs.push("💨 Aria secca");
+        if (!isNaN(ha) && params.hum_air_max!==null && ha > +params.hum_air_max) msgs.push("💦 Aria troppo umida");
+        if (!isNaN(s) && params.soil_min!==null && s < +params.soil_min) msgs.push("🌱 Suolo troppo secco");
+        if (!isNaN(s) && params.soil_max!==null && s > +params.soil_max) msgs.push("🪵 Suolo troppo umido");
+        if (!isNaN(lx) && params.lux_min!==null  && lx < +params.lux_min)  msgs.push("🌑 Poca luce");
+        if (!isNaN(lx) && params.lux_max!==null  && lx > +params.lux_max)  msgs.push("☀️ Troppa luce");
+      }
       return msgs.length ? msgs.join(" · ") : "😊 Sto bene";
     }
 
-    // Format semplice per numeri (mostra "—" se non valido)
-    function fmt(v, unit=""){
-      if (v === null || v === undefined || isNaN(v)) return "—";
-      const isLux = (unit.toLowerCase() === "lux");
-      const n = Number(v);
-      return (isLux ? n.toFixed(0) : n.toFixed(1)) + (unit ? " " + unit : "");
-    }
-
-    // Opzioni comuni dei grafici: griglia asse X visibile
     function baseChartOptions(){
       return {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        interaction: { mode: 'index', intersect: false },
-        scales: {
-          x: {
-            display: true,        // mostro etichette X (timestamp)
-            grid: { display: true, drawOnChartArea: true },
-            ticks: { autoSkip: true, maxTicksLimit: 8 }
-          },
-          y: { grid: { display: true } }
+        responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{mode:'index',intersect:false},
+        scales:{
+          x:{ display:true, grid:{display:true, drawOnChartArea:true}, ticks:{autoSkip:true, maxTicksLimit:8} },
+          y:{ grid:{display:true} }
         }
       };
     }
 
-    // Crea il blocco DOM per UNA pianta (intestazione + carte + grafici)
-    function createPlantSection(deviceId){
+    /* -------------------- DOM per pianta -------------------- */
+    function plantSection(deviceId, species){
       const id = escId(deviceId);
-      const wrap = document.createElement('section');
-      wrap.className = 'plant';
-      wrap.id = `plant_${id}`;
-
-      // HTML minimale con commenti didattici
-      wrap.innerHTML = `
+      const el = document.createElement('section');
+      el.className = 'plant';
+      el.id = `plant_${id}`;
+      el.innerHTML = `
         <div class="head">
-          <!-- Nome pianta -->
-          <div class="pianta">Pianta: <b>${deviceId}</b></div>
-          <!-- Stato calcolato lato client (verrà riempito dopo la fetch) -->
+          <div class="pianta">Pianta: <b>${deviceId}</b> <span class="muted">(${species || 'Specie sconosciuta'})</span></div>
           <div class="stato" id="stato_${id}">Stato: …</div>
         </div>
 
-        <!-- Ultima misura (valori "istantanei") -->
         <div class="grid">
           <div class="card"><b>Ultima misura</b><div id="lastts_${id}">—</div></div>
           <div class="card"><b>Temperatura</b><div id="lastt_${id}">—</div></div>
@@ -129,120 +101,124 @@
           <div class="card"><b>Luce</b><div id="lastl_${id}">—</div></div>
         </div>
 
-        <!-- Grafici: la sezione è CHIUSA di default (details/summary) -->
         <details>
           <summary>Grafici (apri/chiudi)</summary>
-
-          <!-- Grafico 1: Umidità aria / Umidità suolo / Luce -->
-          <div class="chartbox">
-            <div class="muted"><b>Umidità & Lux</b> — umidità aria (%), umidità suolo (ADC), luce (lux)</div>
-            <div style="height:220px">
-              <canvas id="chart_env_${id}"></canvas>
+          <div class="charts2x2">
+            <!-- [1,1] Temp + Umidità aria + Lux (24h) -->
+            <div class="chartbox">
+              <div class="muted"><b>24 h</b> · Temperatura, Umidità aria, Lux</div>
+              <div style="height:220px"><canvas id="c_env24_${id}"></canvas></div>
             </div>
-          </div>
-
-          <!-- Grafico 2: Temperatura / Umidità aria -->
-          <div class="chartbox">
-            <div class="muted"><b>Temperatura & Umidità</b> — temperatura (°C), umidità aria (%)</div>
-            <div style="height:220px">
-              <canvas id="chart_climate_${id}"></canvas>
+            <!-- [1,2] Temp + Umidità aria + Lux (30gg) -->
+            <div class="chartbox">
+              <div class="muted"><b>30 giorni</b> · Temperatura, Umidità aria, Lux</div>
+              <div style="height:220px"><canvas id="c_env30_${id}"></canvas></div>
+            </div>
+            <!-- [2,1] Suolo (24h) -->
+            <div class="chartbox">
+              <div class="muted"><b>24 h</b> · Umidità suolo</div>
+              <div style="height:220px"><canvas id="c_soil24_${id}"></canvas></div>
+            </div>
+            <!-- [2,2] Suolo (30gg) -->
+            <div class="chartbox">
+              <div class="muted"><b>30 giorni</b> · Umidità suolo</div>
+              <div style="height:220px"><canvas id="c_soil30_${id}"></canvas></div>
             </div>
           </div>
         </details>
       `;
-      return wrap;
+      return el;
     }
 
-    // Riempie i riquadri "Ultima misura" e lo stato
-    function fillLast(deviceId, last){
+    /* -------------------- Rendering grafici -------------------- */
+    function drawEnv(canvas, hist){
+      const labels = hist.map(r=>r.ts);
+      const t  = hist.map(r=>+r.temperatura_c);
+      const ha = hist.map(r=>+r.umidita_aria);
+      const lx = hist.map(r=>+r.luce_lux);
+      if (canvas._chart) canvas._chart.destroy();
+      canvas._chart = new Chart(canvas,{
+        type:'line',
+        data:{ labels, datasets:[
+          {label:'Temperatura °C', data:t},
+          {label:'Umidità aria %', data:ha},
+          {label:'Luce (lux)', data:lx},
+        ]},
+        options: baseChartOptions()
+      });
+    }
+    function drawSoil(canvas, hist){
+      const labels = hist.map(r=>r.ts);
+      const s = hist.map(r=>+r.umidita_suolo);
+      if (canvas._chart) canvas._chart.destroy();
+      canvas._chart = new Chart(canvas,{
+        type:'line',
+        data:{ labels, datasets:[ {label:'Umidità suolo (adc)', data:s} ] },
+        options: baseChartOptions()
+      });
+    }
+
+    /* -------------------- Hydrate singola pianta -------------------- */
+    async function hydratePlant(deviceId, species){
       const id = escId(deviceId);
-      document.getElementById(`stato_${id}`).textContent  = "Stato: " + computeMood(last);
-      document.getElementById(`lastts_${id}`).textContent = last && last.ts ? last.ts : "—";
-      document.getElementById(`lastt_${id}`).textContent  = fmt(Number(last?.temperatura_c), "°C");
-      document.getElementById(`lasth_${id}`).textContent  = fmt(Number(last?.umidita_aria), "%");
-      document.getElementById(`lasts_${id}`).textContent  = (last?.umidita_suolo ?? "—");
-      document.getElementById(`lastl_${id}`).textContent  = fmt(Number(last?.luce_lux), "lux");
+      const q  = encodeURIComponent(deviceId);
+
+      // Ultima lettura
+      const last = await jget(`../api/latest.php?device_id=${q}`);
+
+      // Parametri specie (se presenti)
+      let params = null;
+      if (species) params = await jget(`../api/species_params.php?species=${encodeURIComponent(species)}`);
+
+      // Riempi riepilogo
+      document.getElementById(`lastts_${id}`).textContent = last?.ts || '—';
+      document.getElementById(`lastt_${id}`).textContent  = fmt(+last?.temperatura_c, '°C');
+      document.getElementById(`lasth_${id}`).textContent  = fmt(+last?.umidita_aria, '%');
+      document.getElementById(`lasts_${id}`).textContent  = (last?.umidita_suolo ?? '—');
+      document.getElementById(`lastl_${id}`).textContent  = fmt(+last?.luce_lux, 'lux');
+      document.getElementById(`stato_${id}`).textContent  = "Stato: " + mood(last, params);
+
+      // Storici 24h e 30gg
+      const [env24, env30, soil24, soil30] = await Promise.all([
+        jget(`../api/history.php?device_id=${q}&hours=24&limit=2000`),
+        jget(`../api/history.php?device_id=${q}&days=30&limit=5000`),
+        jget(`../api/history.php?device_id=${q}&hours=24&limit=2000`),
+        jget(`../api/history.php?device_id=${q}&days=30&limit=5000`),
+      ]);
+
+      // Disegna 4 grafici
+      const c_env24  = document.getElementById(`c_env24_${id}`);
+      const c_env30  = document.getElementById(`c_env30_${id}`);
+      const c_soil24 = document.getElementById(`c_soil24_${id}`);
+      const c_soil30 = document.getElementById(`c_soil30_${id}`);
+
+      drawEnv(c_env24,  Array.isArray(env24)  ? env24  : []);
+      drawEnv(c_env30,  Array.isArray(env30)  ? env30  : []);
+      drawSoil(c_soil24,Array.isArray(soil24) ? soil24 : []);
+      drawSoil(c_soil30,Array.isArray(soil30) ? soil30 : []);
     }
 
-    // Disegna grafico 1 (Umidità & Lux) con griglia X visibile
-    function drawChartEnv(deviceId, hist){
-      const id  = escId(deviceId);
-      const el  = document.getElementById(`chart_env_${id}`);
-      if (!el) return;
-      const lbl = hist.map(r => r.ts);
-      const a   = hist.map(r => Number(r.umidita_aria));
-      const s   = hist.map(r => Number(r.umidita_suolo));
-      const l   = hist.map(r => Number(r.luce_lux));
-      // Distrugge l’eventuale grafico precedente (se si ricarica dinamicamente)
-      if (el._chart) el._chart.destroy();
-      el._chart = new Chart(el, {
-        type: 'line',
-        data: {
-          labels: lbl,
-          datasets: [
-            { label: 'Umidità aria %',   data: a },
-            { label: 'Umidità suolo (adc)', data: s },
-            { label: 'Luce (lux)',       data: l }
-          ]
-        },
-        options: baseChartOptions()
-      });
-    }
-
-    // Disegna grafico 2 (Temperatura & Umidità aria) con griglia X visibile
-    function drawChartClimate(deviceId, hist){
-      const id  = escId(deviceId);
-      const el  = document.getElementById(`chart_climate_${id}`);
-      if (!el) return;
-      const lbl = hist.map(r => r.ts);
-      const t   = hist.map(r => Number(r.temperatura_c));
-      const a   = hist.map(r => Number(r.umidita_aria));
-      if (el._chart) el._chart.destroy();
-      el._chart = new Chart(el, {
-        type: 'line',
-        data: {
-          labels: lbl,
-          datasets: [
-            { label: 'Temperatura °C', data: t },
-            { label: 'Umidità aria %', data: a }
-          ]
-        },
-        options: baseChartOptions()
-      });
-    }
-
-    // Carica i dati per UNA pianta e popola la sezione
-    async function hydratePlant(deviceId){
-      const q = encodeURIComponent(deviceId);
-      const last = await jget(`../api/latest.php?device_id=${q}`);   // ultimo record
-      const hist = await jget(`../api/history.php?device_id=${q}&limit=144`); // storico (ultimi N)
-      fillLast(deviceId, last && last.ts ? last : null);
-      const series = Array.isArray(hist) ? hist : [];
-      drawChartEnv(deviceId, series);
-      drawChartClimate(deviceId, series);
-    }
-
-    // Avvio: elenca i device e costruisce la pagina una tantum (Niente auto-refresh)
+    /* -------------------- Avvio pagina -------------------- */
     (async () => {
+      // Elenco piante (device + specie dall'ultima lettura)
+      const devs = await jget('../api/devices.php');
       const container = document.getElementById('plants');
 
-      // 1) Richiede l’elenco delle piante (device_id distinti)
-      const devs = await jget('../api/devices.php');
-
       if (!Array.isArray(devs) || devs.length === 0) {
-        container.innerHTML = "<div class='muted'>Nessuna pianta presente nel database.</div>";
+        container.innerHTML = "<div class='muted'>Nessuna pianta trovata nel database.</div>";
         return;
       }
 
-      // 2) Crea il DOM per ciascuna pianta
+      // Crea sezioni
       for (const row of devs) {
-        const deviceId = row.device_id;
-        container.appendChild(createPlantSection(deviceId));
+        const device = row.device_id;
+        const species = row.species || '';
+        container.appendChild(plantSection(device, species));
       }
 
-      // 3) Popola dati e disegna grafici (una sola volta)
+      // Popola dati e grafici (una sola volta)
       for (const row of devs) {
-        await hydratePlant(row.device_id);
+        await hydratePlant(row.device_id, row.species || '');
       }
     })();
   </script>

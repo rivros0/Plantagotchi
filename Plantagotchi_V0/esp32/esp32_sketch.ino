@@ -1,7 +1,6 @@
-
 /*
  * Plantagotchi - ESP32 -> HTTP POST (Altervista) - NO AUTH
- * Invia JSON con device_id nel payload.
+ * Aggiunta: invia anche 'species' (stringa).
  */
 
 #include <WiFi.h>
@@ -12,11 +11,12 @@
 #include <BH1750.h>
 
 // ---- CONFIG ----
-const char* WIFI_SSID = "SSID";
-const char* WIFI_PASS = "PASSWORD";
-
+const char* WIFI_SSID  = "SSID";
+const char* WIFI_PASS  = "PASSWORD";
 const char* INGEST_URL = "https://tuoaccount.altervista.org/api/ingest.php";
+
 const char* DEVICE_ID  = "ESP32-AULA-1";
+const char* SPECIES    = "Basilico";   // << NUOVO: specie botanica monitorata
 
 #define DHTPIN 4
 #define DHTTYPE DHT22
@@ -44,7 +44,7 @@ void setup(){
   dht.begin();
   Wire.begin();
   lightMeter.begin();
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov"); // per timestamp accurati
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   wifiConnect();
 }
 
@@ -53,13 +53,14 @@ void loop(){
 
   float t  = dht.readTemperature();
   float ha = dht.readHumidity();
-  int   s  = analogRead(SOIL_PIN);        // calibrare il range
+  int   s  = analogRead(SOIL_PIN);        // calibrare il range del sensore
   float lx = lightMeter.readLightLevel(); // lux
 
-  // JSON payload
+  // JSON payload (include 'device_id' e 'species')
   String payload = "{";
   payload += "\"ts\":\"" + isoTimestamp() + "\",";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
+  payload += "\"species\":\"" + String(SPECIES) + "\",";
   payload += "\"temperatura_c\":" + String(isnan(t)?0:t, 1) + ",";
   payload += "\"umidita_aria\":" + String(isnan(ha)?0:ha, 1) + ",";
   payload += "\"umidita_suolo\":" + String(s) + ",";
@@ -67,7 +68,7 @@ void loop(){
   payload += "}";
 
   WiFiClientSecure client;
-  client.setInsecure(); // didattico; in produzione impostare CA
+  client.setInsecure(); // didattico; in produzione caricare il CA
 
   HTTPClient https;
   if (https.begin(client, INGEST_URL)) {

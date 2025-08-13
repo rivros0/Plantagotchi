@@ -1,118 +1,76 @@
 #!/usr/bin/env python3
 """
-ESP32 HTTP Simulator (NO AUTH) – Multi-Device
-Versione con array statico di piante definito all'inizio.
+ESP32 HTTP Simulator (NO AUTH) – Multi-Device con specie
+Definisce staticamente elenco di device e specie, invia JSON a ingest.php.
 """
 
-import sys
-import time
-import json
-import math
-import random
-import requests
+import time, json, math, random, requests
 from datetime import datetime, timezone
 
-# ----------------- CONFIGURAZIONE -----------------
-# Endpoint Altervista
+# --------- CONFIG ---------
 URL = "https://test0000.altervista.org/api/ingest.php"
 
-# Array statico di piante
-DEVICES = [
-    "ESP32-AULA-1",
-    "ESP32-AULA-2",
-    "ESP32-SERRA-1"
+# Elenco statico device -> specie
+PLANTS = [
+    {"device_id": "ESP32-AULA-1", "species": "Basilico"},
+    {"device_id": "ESP32-AULA-2", "species": "Aloe"},
+    {"device_id": "ESP32-SERRA-1", "species": "Basilico"},
 ]
 
-MODE = "roundrobin"     # "roundrobin" o "random"
-INTERVAL = 5            # secondi tra richieste
-COUNT = 0               # 0 = infinito, >0 = numero totale invii
-PER_DEVICE = 0          # Se >0, invii per ogni pianta (ignora COUNT)
-TIMEOUT = 8             # Timeout HTTP
-SEED = None             # Per riproducibilità valori
-USE_CYCLE = True        # Ciclo diurno ON/OFF
-# ---------------------------------------------------
+MODE = "roundrobin"   # "roundrobin" | "random"
+INTERVAL = 2          # secondi tra invii
+COUNT = 0             # 0=infinito (complessivo)
+PER_DEVICE = 0        # se >0: invii per pianta (override COUNT)
+TIMEOUT = 8
+SEED = None
+USE_CYCLE = True
+# --------------------------
 
-def iso_utc_now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def iso_utc_now(): return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def clamp(v,lo,hi): return max(lo, min(hi, v))
 
-def clamp(v, lo, hi):
-    return max(lo, min(hi, v))
-
-def gen_values(tick: int, seed=None, cycle=True):
+def gen_values(tick, seed=None, cycle=True):
     rng = random.Random((seed or 0) + tick)
-    base_temp = 20.0
-    base_hum  = 55.0
-    base_soil = 1000
-    base_lux  = 3000.0
-
-    cyc = math.sin(2*math.pi * (tick % 1440) / 1440.0) if cycle else 0.0
-
-    temp = base_temp + 4.0*cyc + rng.uniform(-0.6, 0.6)
-    hum  = base_hum  - 5.0*cyc + rng.uniform(-2.0, 2.0)
-    soil = base_soil - 80.0*cyc + rng.uniform(-25, 25)
-    lux  = base_lux  + 500.0*max(0.0, cyc) + rng.uniform(-30, 30)
-
-    return {
-        "ts": iso_utc_now(),
-        "temperatura_c": round(clamp(temp, 10.0, 40.0), 1),
-        "umidita_aria":  round(clamp(hum, 10.0, 95.0), 1),
-        "umidita_suolo": int(clamp(soil, 50, 1000)),
-        "luce_lux":      round(clamp(lux, 500.0, 5000.0), 1),
-    }
+    base_temp, base_hum, base_soil, base_lux = 24.0, 55.0, 500, 300.0
+    cyc = math.sin(2*math.pi*(tick%1440)/1440.0) if cycle else 0.0
+    temp = clamp(base_temp + 4.0*cyc + rng.uniform(-0.6,0.6), 10.0, 40.0)
+    hum  = clamp(base_hum  - 5.0*cyc + rng.uniform(-2.0,2.0), 10.0, 95.0)
+    soil = int(clamp(base_soil - 80.0*cyc + rng.uniform(-25,25), 50, 1000))
+    lux  = clamp(base_lux  + 500.0*max(0.0,cyc) + rng.uniform(-30,30), 0.0, 5000.0)
+    return {"ts": iso_utc_now(), "temperatura_c": round(temp,1), "umidita_aria": round(hum,1), "umidita_suolo": soil, "luce_lux": round(lux,1)}
 
 def main():
     rng = random.Random(SEED)
-    tick = 0
-    total_sent = 0
-    sent_by_device = {d: 0 for d in DEVICES}
-    idx = 0
-    headers = {"Content-Type": "application/json"}
+    idx, tick, total = 0, 0, 0
+    sent = {p["device_id"]:0 for p in PLANTS}
+    headers = {"Content-Type":"application/json"}
 
-    print(f"Simulatore multi-pianta -> {URL}")
-    print(f"Devices: {DEVICES}")
-    print(f"Modalità: {MODE} | Intervallo: {INTERVAL}s | Ciclo diurno: {'ON' if USE_CYCLE else 'OFF'}")
-    print("Ctrl+C per interrompere.\n")
-
-    def should_stop():
-        if PER_DEVICE > 0:
-            return all(sent_by_device[d] >= PER_DEVICE for d in DEVICES)
-        if COUNT > 0:
-            return total_sent >= COUNT
+    def stop():
+        if PER_DEVICE>0: return all(sent[p["device_id"]]>=PER_DEVICE for p in PLANTS)
+        if COUNT>0: return total>=COUNT
         return False
 
+    print(f"Simulatore -> {URL}\nDispositivi: {[p['device_id']+'('+p['species']+')' for p in PLANTS]}")
     try:
         while True:
-            if MODE == "roundrobin":
-                device = DEVICES[idx % len(DEVICES)]
-                idx += 1
-            else:
-                device = rng.choice(DEVICES)
-
+            plant = PLANTS[idx % len(PLANTS)] if MODE=="roundrobin" else rng.choice(PLANTS)
             payload = gen_values(tick, seed=SEED, cycle=USE_CYCLE)
-            payload["device_id"] = device
-
+            payload["device_id"] = plant["device_id"]
+            payload["species"]   = plant["species"]   # << invia specie
             try:
                 r = requests.post(URL, headers=headers, data=json.dumps(payload), timeout=TIMEOUT)
-                ok = (200 <= r.status_code < 300)
-                print(f"[{payload['ts']}] {device} POST {r.status_code} ({'OK' if ok else 'ERR'})")
+                print(f"[{payload['ts']}] {plant['device_id']}({plant['species']}) -> {r.status_code}")
             except Exception as e:
-                print(f"[{payload['ts']}] {device} POST ERROR: {e}")
+                print(f"[{payload['ts']}] ERRORE: {e}")
 
-            total_sent += 1
-            sent_by_device[device] += 1
-            tick += 1
-
-            if should_stop():
-                break
+            sent[plant["device_id"]]+=1; total+=1; tick+=1; idx+=1
+            if stop(): break
             time.sleep(max(0.1, INTERVAL))
-
     except KeyboardInterrupt:
-        print("\nInterrotto dall'utente.")
+        pass
 
-    print("\nRiepilogo invii per device:")
-    for d in DEVICES:
-        print(f" - {d}: {sent_by_device[d]} richieste")
-    print("Fatto.")
+    print("\nRiepilogo:")
+    for d,c in sent.items(): print(f" - {d}: {c}")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
