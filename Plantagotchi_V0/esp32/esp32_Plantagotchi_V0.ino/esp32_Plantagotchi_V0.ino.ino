@@ -1,284 +1,164 @@
 /*******************************************************
  * Plantagotchi ESP32 → HTTP POST (Altervista)
- * Sensori: DHT22 (aria), LDR (fotoresistore modulo LM393), YL-69 (umidità suolo)
- * Invia JSON via HTTP(S) POST all'endpoint REST del sito.
+ * Sensori: DHT22 (aria), LDR (fotoresistore), YL-69 (suolo)
+ * - Log Serial ogni 5s (anche senza Wi‑Fi)
+ * - POST verso API ogni 60s con payload coerente con PHP
+ *   Campi richiesti: temperatura_c, umidita_aria, umidita_suolo, luce_lux,
+ *                    ts, device_id, species
  *******************************************************/
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <WiFiUdp.h>
-#include <NTPClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
+#include <time.h>
+#include <math.h>
 
-/* ============ CONFIGURAZIONE ============ */
-// Identità
-#define DEVICE_ID  "ptg-esp32-01"
-#define PLANT_ID   "basilico-1"
+/* ================== CONFIG ================== */
+#define DEVICE_ID "ptg-esp32-01"
+#define SPECIES   "Basilico"   // obbligatorio per l'API
 
-// Wi‑Fi
 const char* WIFI_SSID = "ninophone";
 const char* WIFI_PASS = "sapusapunette";
-
-// API Altervista
-// Usa l'endpoint effettivo in produzione (qui esempio "ingest.php")
-const char* API_URL = "https://test0000.altervista.org/api/ingest.php";
-const char* API_KEY = ""; // se non usi auth, lascia vuoto
+const char* API_URL   = "http://test0000.altervista.org/api/ingest.php";
+const char* API_KEY   = "";   // opzionale
 
 // Intervalli
-const unsigned long MEASURE_INTERVAL_MS = 60UL * 1000UL; // 60 s
-const uint8_t       HTTP_MAX_RETRIES    = 3;
+const unsigned long LOG_INTERVAL_MS  = 5000;   // stampa seriale
+const unsigned long POST_INTERVAL_MS = 60000;  // POST verso API
+const uint8_t  HTTP_MAX_RETRIES      = 3;
 const unsigned long HTTP_RETRY_DELAY_MS = 1500;
 
-// Pin
-#define PIN_DHT        26      // DHT22 data
-#define PIN_LDR_ADC    35      // uscita analogica modulo LDR → GPIO35 (ADC1)
-#define PIN_SOIL_ADC   34      // uscita analogica modulo YL‑69 → GPIO34 (ADC1)
-#define PIN_LED        2
-#define DHTTYPE        DHT22
+// Pin sensori
+#define PIN_DHT      26
+#define PIN_LDR_ADC  35
+#define PIN_SOIL_ADC 34
+#define PIN_LED      2
+#define DHTTYPE      DHT22
 
-// Calibrazioni (aggiorna con i tuoi RAW misurati)
-int LDR_RAW_DARK   = 300;   // buio
-int LDR_RAW_BRIGHT = 3500;  // piena luce
-int SOIL_RAW_DRY   = 3200;  // secco
-int SOIL_RAW_WET   = 1200;  // bagnato
+// Calibrazioni
+int   LDR_RAW_DARK    = 300;       // RAW in buio
+int   LDR_RAW_BRIGHT  = 3500;      // RAW in piena luce
+float LUX_DARK        = 1.0f;      // lux approssimati al buio
+float LUX_BRIGHT      = 10000.0f;  // lux in piena luce (regolabile)
 
-/* ============ STRUTTURE & GLOBALI ============ */
-struct AirData  { float temp_c=NAN, hum_pct=NAN; bool ok=false; };
-struct LightData{ int   raw=-1; float pct=NAN;  bool ok=false; };
-struct SoilData { int   raw=-1; float pct=NAN;  bool ok=false; };
+int SOIL_RAW_DRY = 3200;  // suolo secco (RAW)
+int SOIL_RAW_WET = 1200;  // suolo bagnato (RAW)
 
-WiFiUDP ntpUDP;                      // timestamp
-NTPClient ntp(ntpUDP, "pool.ntp.org", 0, 3600000);
+/* ================== GLOBALI ================== */
+struct AirData  { float t=NAN, h=NAN; bool ok=false; };
+struct LightData{ int raw=-1; float lux=NAN; bool ok=false; };
+struct SoilData { int raw=-1; int pct=0;   bool ok=false; };
+
 DHT dht(PIN_DHT, DHTTYPE);
-unsigned long lastMeasure = 0;
+unsigned long lastLog=0, lastPost=0;
 
-/* ============ UTILS ============ */
-static inline float clampf(float v, float lo, float hi){return v<lo?lo:(v>hi?hi:v);} 
-static inline float mapPct(int raw,int lo,int hi,bool asc){
-  if(hi==lo) return NAN; 
-  float pct = asc ? 100.0f*( (raw-lo)/(float)(hi-lo) )
-                  : 100.0f*( (lo-raw)/(float)(lo-hi) );
-  return clampf(pct,0.0f,100.0f);
+/* ================== UTILS ================== */
+static inline float clampf(float v,float lo,float hi){ return v<lo?lo:(v>hi?hi:v); }
+static inline float fmap(float x,float in_min,float in_max,float out_min,float out_max){
+  if(in_max==in_min) return NAN; return (x-in_min)*(out_max-out_min)/(in_max-in_min)+out_min;
 }
-static inline void blink(uint8_t n,int onMs=60,int offMs=80){pinMode(PIN_LED,OUTPUT);while(n--){digitalWrite(PIN_LED,HIGH);delay(onMs);digitalWrite(PIN_LED,LOW);delay(offMs);}}
 
-/* ============ Wi‑Fi ============ */
+float ldrRawToLux(int raw){
+  float lux = fmap((float)raw,(float)LDR_RAW_DARK,(float)LDR_RAW_BRIGHT,LUX_DARK,LUX_BRIGHT);
+  return lux<0?0:lux;
+}
+
+int soilRawToPct(int raw){
+  float pct = 100.0f * ((float)(SOIL_RAW_DRY - raw) / (float)(SOIL_RAW_DRY - SOIL_RAW_WET));
+  pct = clampf(pct,0.0f,100.0f); return (int)lroundf(pct);
+}
+
+void blink(int n){ pinMode(PIN_LED,OUTPUT); while(n--){digitalWrite(PIN_LED,HIGH);delay(60);digitalWrite(PIN_LED,LOW);delay(80);} }
+
+/* ================== RETE & TEMPO ================== */
 void ensureWiFi(){
   if(WiFi.status()==WL_CONNECTED) return;
   WiFi.mode(WIFI_STA); WiFi.begin(WIFI_SSID,WIFI_PASS);
-  unsigned long t0=millis(); Serial.print(F("WiFi:"));
-  while(WiFi.status()!=WL_CONNECTED && millis()-t0<15000){Serial.print('.');delay(300);} Serial.println();
-  if(WiFi.status()==WL_CONNECTED){Serial.print(F("IP: "));Serial.println(WiFi.localIP()); blink(2);} else {Serial.println(F("Wi‑Fi FAIL"));}
+  unsigned long t0=millis();
+  while(WiFi.status()!=WL_CONNECTED && millis()-t0<15000){ delay(300); }
 }
 
-/* ============ SENSORI ============ */
-AirData  readAir(){ AirData a; a.hum_pct=dht.readHumidity(); a.temp_c=dht.readTemperature(); a.ok=!(isnan(a.hum_pct)||isnan(a.temp_c)); return a; }
-LightData readLight(){ LightData l; l.raw=analogRead(PIN_LDR_ADC); l.pct=mapPct(l.raw,LDR_RAW_DARK,LDR_RAW_BRIGHT,true); l.ok=(l.raw>=0)&&!isnan(l.pct); return l; }
-SoilData  readSoil(){ SoilData s; s.raw=analogRead(PIN_SOIL_ADC); s.pct=mapPct(s.raw,SOIL_RAW_DRY,SOIL_RAW_WET,false); s.ok=(s.raw>=0)&&!isnan(s.pct); return s; }
+String nowTimestamp(){
+  time_t now = time(nullptr);
+  if(now<=0) return String("");
+  struct tm tm_now; gmtime_r(&now, &tm_now);
+  char buf[20];
+  strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M:%S", &tm_now);
+  return String(buf);
+}
 
-/* ============ POST ============ */
-bool postTelemetry(const String& json){
+/* ================== SENSORI ================== */
+AirData  readAir(){ AirData a; a.h=dht.readHumidity(); a.t=dht.readTemperature(); a.ok=!isnan(a.h)&&!isnan(a.t); return a; }
+LightData readLight(){ LightData l; l.raw=analogRead(PIN_LDR_ADC); l.lux=ldrRawToLux(l.raw); l.ok=l.raw>=0; return l; }
+SoilData  readSoil(){ SoilData s; s.raw=analogRead(PIN_SOIL_ADC); s.pct=soilRawToPct(s.raw); s.ok=s.raw>=0; return s; }
+
+/* ================== POST ================== */
+bool postTelemetry(float temperatura_c, float umidita_aria, int umidita_suolo, float luce_lux, const String& ts_str){
   if(WiFi.status()!=WL_CONNECTED) return false;
-  HTTPClient http; http.setUserAgent(String("Plantagotchi-ESP32/1.0 (")+DEVICE_ID+")"); http.begin(API_URL);
+  HTTPClient http; http.begin(API_URL);
   http.addHeader("Content-Type","application/json");
-  if(API_KEY && strlen(API_KEY)>0){ http.addHeader("X-API-KEY",API_KEY); http.addHeader("Authorization",String("Bearer ")+API_KEY);} 
-  for(uint8_t att=1; att<=HTTP_MAX_RETRIES; ++att){
-    int code = http.POST((uint8_t*)json.c_str(), json.length());
-    Serial.printf("[HTTP] POST attempt %u, code=%d
-", att, code);
-    if(code>0){
-      if(code==HTTP_CODE_OK||code==HTTP_CODE_CREATED||code==HTTP_CODE_ACCEPTED){ Serial.println(http.getString()); http.end(); blink(1); return true; }
-      else { Serial.println(http.getString()); }
-    } else {
-      Serial.printf("[HTTP] conn err: %s
-", http.errorToString(code).c_str());
-    }
+  if(API_KEY && strlen(API_KEY)>0){ http.addHeader("X-API-KEY",API_KEY); }
+
+  StaticJsonDocument<256> doc;
+  doc["temperatura_c"] = temperatura_c;
+  doc["umidita_aria"]  = umidita_aria;
+  doc["umidita_suolo"] = umidita_suolo;
+  doc["luce_lux"]      = luce_lux;
+  doc["ts"]            = ts_str;
+  doc["device_id"]     = DEVICE_ID;
+  doc["species"]       = SPECIES;
+
+  String payload; serializeJson(doc,payload);
+  for(uint8_t i=0;i<HTTP_MAX_RETRIES;i++){
+    int code = http.POST(payload);
+    Serial.printf("[HTTP] POST attempt %u, code=%d\n", i+1, code);
+    if(code==200||code==201){ Serial.println(http.getString()); http.end(); return true; }
     delay(HTTP_RETRY_DELAY_MS);
   }
   http.end(); return false;
 }
 
-/* ============ SETUP ============ */
+/* ================== SETUP/LOOP ================== */
 void setup(){
+  Serial.begin(115200);
   pinMode(PIN_LED,OUTPUT); digitalWrite(PIN_LED,LOW);
-  Serial.begin(115200); delay(100);
-  analogReadResolution(12); // 0..4095
-  analogSetPinAttenuation(PIN_LDR_ADC, ADC_11db);
-  analogSetPinAttenuation(PIN_SOIL_ADC,ADC_11db);
-  dht.begin(); ensureWiFi(); ntp.begin(); ntp.update(); blink(3);
+  analogReadResolution(12);
+  analogSetPinAttenuation(PIN_LDR_ADC,  ADC_11db);
+  analogSetPinAttenuation(PIN_SOIL_ADC, ADC_11db);
+  dht.begin();
+
+  ensureWiFi();
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  blink(2);
 }
 
-/* ============ LOOP ============ */
 void loop(){
   if(WiFi.status()!=WL_CONNECTED) ensureWiFi();
-  unsigned long now=millis();
-  if(now-lastMeasure>=MEASURE_INTERVAL_MS){
-    lastMeasure=now; ntp.update(); unsigned long epoch=ntp.getEpochTime();
+  unsigned long nowMs = millis();
 
-    AirData air=readAir(); LightData lgt=readLight(); SoilData sol=readSoil();
+  AirData air = readAir();
+  LightData lgt = readLight();
+  SoilData sol = readSoil();
 
-    // --- Serial monitor: riepilogo misure ---
-    Serial.printf("[TS] %lu s
-", epoch);
-    Serial.printf("[AIR] T=%.2f °C, RH=%.1f %% (ok=%d)
-", air.temp_c, air.hum_pct, air.ok);
-    Serial.printf("[LGT] RAW=%d, PCT=%.1f %% (ok=%d)
-", lgt.raw, lgt.pct, lgt.ok);
-    Serial.printf("[SOIL] RAW=%d, PCT=%.1f %% (ok=%d)
-", sol.raw, sol.pct, sol.ok);
-
-    StaticJsonDocument<384> doc;
-    doc["device_id"]=DEVICE_ID; doc["plant_id"]=PLANT_ID; doc["ts"]=epoch;
-    JsonObject airJ=doc.createNestedObject("air"); airJ["temp_c"]= air.ok?air.temp_c:nullptr; airJ["hum_pct"]= air.ok?air.hum_pct:nullptr;
-    JsonObject lJ=doc.createNestedObject("light"); lJ["raw"]=lgt.raw; lJ["pct"]= lgt.ok?lgt.pct:nullptr;
-    JsonObject sJ=doc.createNestedObject("soil");  sJ["raw"]=sol.raw; sJ["pct"]= sol.ok?sol.pct:nullptr;
-
-    char buf[512]; size_t n=serializeJson(doc,buf,sizeof(buf)); String payload(String(buf,n));
-    Serial.println(payload); // JSON inviato
-
-    if(!postTelemetry(payload)) Serial.println(F("Invio fallito (retry al prossimo ciclo)"));
+  if(nowMs - lastLog >= LOG_INTERVAL_MS){
+    lastLog = nowMs;
+    String ts = nowTimestamp();
+    Serial.printf("[TS ] %s\n", ts.length()? ts.c_str():"(no-ntp)");
+    Serial.printf("[AIR] T=%.2f °C  RH=%.1f %%  ok=%d\n", air.t, air.h, air.ok);
+    Serial.printf("[LGT] RAW=%d  LUX=%.1f\n", lgt.raw, lgt.lux);
+    Serial.printf("[SOL] RAW=%d  PCT=%d %%\n", sol.raw, sol.pct);
   }
-  delay(5);
-}
-/*******************************************************
- * Plantagotchi ESP32 → HTTP POST (Altervista)
- * Sensori: DHT22 (aria), LDR (fotoresistore modulo LM393), YL-69 (umidità suolo)
- * Invia JSON via HTTP(S) POST all'endpoint REST del sito.
- *******************************************************/
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiUdp.h>
-#include <NTPClient.h>
-#include <ArduinoJson.h>
-#include <DHT.h>
 
-/* ============ CONFIGURAZIONE ============ */
-// Identità
-#define DEVICE_ID  "ptg-esp32-01"
-#define PLANT_ID   "basilico-1"
-
-// Wi‑Fi
-const char* WIFI_SSID = "ninophone";
-const char* WIFI_PASS = "sapusapunette";
-
-// API Altervista
-// Usa l'endpoint effettivo in produzione (qui esempio "ingest.php")
-const char* API_URL = "https://test0000.altervista.org/api/ingest.php";
-const char* API_KEY = ""; // se non usi auth, lascia vuoto
-
-// Intervalli
-const unsigned long MEASURE_INTERVAL_MS = 60UL * 1000UL; // 60 s
-const uint8_t       HTTP_MAX_RETRIES    = 3;
-const unsigned long HTTP_RETRY_DELAY_MS = 1500;
-
-// Pin
-#define PIN_DHT        26      // DHT22 data
-#define PIN_LDR_ADC    35      // uscita analogica modulo LDR → GPIO35 (ADC1)
-#define PIN_SOIL_ADC   34      // uscita analogica modulo YL‑69 → GPIO34 (ADC1)
-#define PIN_LED        2
-#define DHTTYPE        DHT22
-
-// Calibrazioni (aggiorna con i tuoi RAW misurati)
-int LDR_RAW_DARK   = 300;   // buio
-int LDR_RAW_BRIGHT = 3500;  // piena luce
-int SOIL_RAW_DRY   = 3200;  // secco
-int SOIL_RAW_WET   = 1200;  // bagnato
-
-/* ============ STRUTTURE & GLOBALI ============ */
-struct AirData  { float temp_c=NAN, hum_pct=NAN; bool ok=false; };
-struct LightData{ int   raw=-1; float pct=NAN;  bool ok=false; };
-struct SoilData { int   raw=-1; float pct=NAN;  bool ok=false; };
-
-WiFiUDP ntpUDP;                      // timestamp
-NTPClient ntp(ntpUDP, "pool.ntp.org", 0, 3600000);
-DHT dht(PIN_DHT, DHTTYPE);
-unsigned long lastMeasure = 0;
-
-/* ============ UTILS ============ */
-static inline float clampf(float v, float lo, float hi){return v<lo?lo:(v>hi?hi:v);} 
-static inline float mapPct(int raw,int lo,int hi,bool asc){
-  if(hi==lo) return NAN; 
-  float pct = asc ? 100.0f*( (raw-lo)/(float)(hi-lo) )
-                  : 100.0f*( (lo-raw)/(float)(lo-hi) );
-  return clampf(pct,0.0f,100.0f);
-}
-static inline void blink(uint8_t n,int onMs=60,int offMs=80){pinMode(PIN_LED,OUTPUT);while(n--){digitalWrite(PIN_LED,HIGH);delay(onMs);digitalWrite(PIN_LED,LOW);delay(offMs);}}
-
-/* ============ Wi‑Fi ============ */
-void ensureWiFi(){
-  if(WiFi.status()==WL_CONNECTED) return;
-  WiFi.mode(WIFI_STA); WiFi.begin(WIFI_SSID,WIFI_PASS);
-  unsigned long t0=millis(); Serial.print(F("WiFi:"));
-  while(WiFi.status()!=WL_CONNECTED && millis()-t0<15000){Serial.print('.');delay(300);} Serial.println();
-  if(WiFi.status()==WL_CONNECTED){Serial.print(F("IP: "));Serial.println(WiFi.localIP()); blink(2);} else {Serial.println(F("Wi‑Fi FAIL"));}
-}
-
-/* ============ SENSORI ============ */
-AirData  readAir(){ AirData a; a.hum_pct=dht.readHumidity(); a.temp_c=dht.readTemperature(); a.ok=!(isnan(a.hum_pct)||isnan(a.temp_c)); return a; }
-LightData readLight(){ LightData l; l.raw=analogRead(PIN_LDR_ADC); l.pct=mapPct(l.raw,LDR_RAW_DARK,LDR_RAW_BRIGHT,true); l.ok=(l.raw>=0)&&!isnan(l.pct); return l; }
-SoilData  readSoil(){ SoilData s; s.raw=analogRead(PIN_SOIL_ADC); s.pct=mapPct(s.raw,SOIL_RAW_DRY,SOIL_RAW_WET,false); s.ok=(s.raw>=0)&&!isnan(s.pct); return s; }
-
-/* ============ POST ============ */
-bool postTelemetry(const String& json){
-  if(WiFi.status()!=WL_CONNECTED) return false;
-  HTTPClient http; http.setUserAgent(String("Plantagotchi-ESP32/1.0 (")+DEVICE_ID+")"); http.begin(API_URL);
-  http.addHeader("Content-Type","application/json");
-  if(API_KEY && strlen(API_KEY)>0){ http.addHeader("X-API-KEY",API_KEY); http.addHeader("Authorization",String("Bearer ")+API_KEY);} 
-  for(uint8_t att=1; att<=HTTP_MAX_RETRIES; ++att){
-    int code = http.POST((uint8_t*)json.c_str(), json.length());
-    Serial.printf("[HTTP] POST attempt %u, code=%d
-", att, code);
-    if(code>0){
-      if(code==HTTP_CODE_OK||code==HTTP_CODE_CREATED||code==HTTP_CODE_ACCEPTED){ Serial.println(http.getString()); http.end(); blink(1); return true; }
-      else { Serial.println(http.getString()); }
-    } else {
-      Serial.printf("[HTTP] conn err: %s
-", http.errorToString(code).c_str());
-    }
-    delay(HTTP_RETRY_DELAY_MS);
+  if(nowMs - lastPost >= POST_INTERVAL_MS){
+    lastPost = nowMs;
+    String ts = nowTimestamp();
+    bool ok = postTelemetry(
+      air.ok?air.t:NAN,
+      air.ok?air.h:NAN,
+      sol.pct,
+      lgt.lux,
+      ts
+    );
+    if(!ok) Serial.println(F("[HTTP] Invio fallito (ritento al prossimo ciclo)"));
   }
-  http.end(); return false;
-}
-
-/* ============ SETUP ============ */
-void setup(){
-  pinMode(PIN_LED,OUTPUT); digitalWrite(PIN_LED,LOW);
-  Serial.begin(115200); delay(100);
-  analogReadResolution(12); // 0..4095
-  analogSetPinAttenuation(PIN_LDR_ADC, ADC_11db);
-  analogSetPinAttenuation(PIN_SOIL_ADC,ADC_11db);
-  dht.begin(); ensureWiFi(); ntp.begin(); ntp.update(); blink(3);
-}
-
-/* ============ LOOP ============ */
-void loop(){
-  if(WiFi.status()!=WL_CONNECTED) ensureWiFi();
-  unsigned long now=millis();
-  if(now-lastMeasure>=MEASURE_INTERVAL_MS){
-    lastMeasure=now; ntp.update(); unsigned long epoch=ntp.getEpochTime();
-
-    AirData air=readAir(); LightData lgt=readLight(); SoilData sol=readSoil();
-
-    // --- Serial monitor: riepilogo misure ---
-    Serial.printf("[TS] %lu s
-", epoch);
-    Serial.printf("[AIR] T=%.2f °C, RH=%.1f %% (ok=%d)
-", air.temp_c, air.hum_pct, air.ok);
-    Serial.printf("[LGT] RAW=%d, PCT=%.1f %% (ok=%d)
-", lgt.raw, lgt.pct, lgt.ok);
-    Serial.printf("[SOIL] RAW=%d, PCT=%.1f %% (ok=%d)
-", sol.raw, sol.pct, sol.ok);
-
-    StaticJsonDocument<384> doc;
-    doc["device_id"]=DEVICE_ID; doc["plant_id"]=PLANT_ID; doc["ts"]=epoch;
-    JsonObject airJ=doc.createNestedObject("air"); airJ["temp_c"]= air.ok?air.temp_c:nullptr; airJ["hum_pct"]= air.ok?air.hum_pct:nullptr;
-    JsonObject lJ=doc.createNestedObject("light"); lJ["raw"]=lgt.raw; lJ["pct"]= lgt.ok?lgt.pct:nullptr;
-    JsonObject sJ=doc.createNestedObject("soil");  sJ["raw"]=sol.raw; sJ["pct"]= sol.ok?sol.pct:nullptr;
-
-    char buf[512]; size_t n=serializeJson(doc,buf,sizeof(buf)); String payload(String(buf,n));
-    Serial.println(payload); // JSON inviato
-
-    if(!postTelemetry(payload)) Serial.println(F("Invio fallito (retry al prossimo ciclo)"));
-  }
-  delay(5);
 }
