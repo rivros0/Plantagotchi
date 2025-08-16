@@ -133,7 +133,7 @@
       const h  = hist.map(r=>+r.umidita_aria);
       if (canvas._chart) canvas._chart.destroy();
       canvas._chart = new Chart(canvas,{ type:'line',
-        data:{ labels, datasets:[ {label:'Temperatura °C', data:t}, {label:'Umidità aria %', data:h} ] },
+        data:{ labels, datasets:[ {label:'Temperatura °C', data:t,  borderColor: '#16a34a'}, {label:'Umidità aria %', data:h} ] },
         options: baseChartOptions()
       });
     }
@@ -142,7 +142,7 @@
       const l = hist.map(r=>+r.luce_lux);
       if (canvas._chart) canvas._chart.destroy();
       canvas._chart = new Chart(canvas,{ type:'line',
-        data:{ labels, datasets:[ {label:'Luce (lux)', data:l} ] },
+        data:{ labels, datasets:[ {label:'Luce (lux)', data:l, borderColor: '#f59e0b',} ] },
         options: baseChartOptions()
       });
     }
