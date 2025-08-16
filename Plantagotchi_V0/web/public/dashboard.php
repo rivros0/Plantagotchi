@@ -41,6 +41,9 @@
 </head>
 <body>
   <h1>Plantagotchi – Pannello multi-pianta</h1>
+
+  <a href="/public/species_manage.php" class="btn btn-outline-dark mb-3">Gestione specie</a>
+
   <div id="plants"></div>
 
   <script>
