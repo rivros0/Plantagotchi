@@ -1,20 +1,18 @@
-
 <?php
-// Plantagotchi - Configurazione DB (NO AUTH)
-header('Content-Type: application/json');
+// Plantagotchi - Configurazione database (procedurale, senza oggetti)
 
-$DB_HOST = "localhost";
-$DB_NAME = "my_test0000";
-$DB_USER = "test0000";
-$DB_PASS = "AGPbJB7PyXt7";
+// Definizione costanti per la connessione al database
+define('DB_HOST', 'localhost');          // Host del database (di solito 'localhost' su Altervista)
+define('DB_NAME', 'my_test0000');        // Nome del database
+define('DB_USER', 'test0000');           // Nome utente del database
+define('DB_PASS', 'AGPbJB7PyXt7');       // Password del database
 
-try {
-  $pdo = new PDO("mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4", $DB_USER, $DB_PASS, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-  ]);
-} catch (Exception $e) {
-  http_response_code(500);
-  echo json_encode(["error" => "DB connection failed"]);
-  exit;
+// Connessione al database MySQL in modalità procedurale
+$conn = mysqli_connect(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+
+// Verifica della connessione
+if (!$conn) {
+    // In caso di errore, termina lo script e mostra il messaggio
+    die("Errore connessione al database: " . mysqli_connect_error());
 }
+?>

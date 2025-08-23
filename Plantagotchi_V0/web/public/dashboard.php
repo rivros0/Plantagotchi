@@ -1,44 +1,48 @@
 <?php
-require_once __DIR__ . '/config.php';
-session_start();
-if (!isset($_SESSION['user_id'])) {
-    header("Location: index.php");
-    exit;
+// Otteniamo i parametri di riferimento per la specie
+$species = $pianta['species'];
+$parametri_query = mysqli_query($conn, "SELECT * FROM species_params WHERE species = '" . mysqli_real_escape_string($conn, $species) . "'");
+$parametri = mysqli_fetch_assoc($parametri_query);
+
+// Stato sintetico con emoji
+$allarmi = [];
+
+// Temperatura
+if ($parametri) {
+  if ($pianta['temperatura_c'] < $parametri['temp_min']) {
+    $allarmi[] = "❄️";
+  } elseif ($pianta['temperatura_c'] > $parametri['temp_max']) {
+    $allarmi[] = "🔥";
+  }
+
+  // Umidità aria
+  if ($pianta['umidita_aria'] < $parametri['hum_air_min']) {
+    $allarmi[] = "🌬️";
+  } elseif ($pianta['umidita_aria'] > $parametri['hum_air_max']) {
+    $allarmi[] = "💧";
+  }
+
+  // Umidità suolo
+  if ($pianta['umidita_suolo'] < $parametri['soil_min']) {
+    $allarmi[] = "🌵";
+  } elseif ($pianta['umidita_suolo'] > $parametri['soil_max']) {
+    $allarmi[] = "🌊";
+  }
+
+  // Luce
+  if ($pianta['luce_lux'] < $parametri['lux_min']) {
+    $allarmi[] = "🌑";
+  } elseif ($pianta['luce_lux'] > $parametri['lux_max']) {
+    $allarmi[] = "☀️";
+  }
 }
 
-$db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
-$q = "SELECT species, MAX(ts) AS last_ts FROM misure_pianta GROUP BY species ORDER BY species";
-$res = $db->query($q);
-$piante = [];
-while ($row = $res->fetch_assoc()) {
-    $piante[] = $row;
-}
+$stato = empty($allarmi) ? '🟢' : implode(' ', $allarmi);
 ?>
 
-<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8">
-  <title>Dashboard - Plantagotchi</title>
-</head>
-<body>
-  <div><h1>Plantagotchi - Dashboard</h1></div>
-
-  <div id="toolbar">
-    <a href="gestione_specie.php">Gestione specie</a> |
-    <a href="gestione_parametri.php">Gestione parametri</a> |
-    <a href="logout.php">Logout</a>
-  </div>
-
-  <div id="popolazione">
-    <h2>Piante monitorate</h2>
-    <?php foreach ($piante as $p): ?>
-      <div style="border:1px solid #ccc; padding:1em; margin:1em; display:inline-block;">
-        <strong><?php echo htmlspecialchars($p['species']); ?></strong><br>
-        Ultimo dato: <?php echo $p['last_ts']; ?><br>
-        <span style="color:green;">● OK</span>
-      </div>
-    <?php endforeach; ?>
-  </div>
-</body>
-</html>
+<div class="card">
+  <div class="stato"><?= $stato ?></div>
+  <h3><?= htmlspecialchars($pianta['species']) ?></h3>
+  <p>Ultima rilevazione:<br><strong><?= htmlspecialchars($pianta['ts']) ?></strong></p>
+  <a href="grafico.php?device_id=<?= urlencode($pianta['device_id']) ?>">Vedi dettagli</a>
+</div>
