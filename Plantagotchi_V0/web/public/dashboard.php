@@ -8,27 +8,25 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Recupera ultima misurazione per ogni pianta
-$query = "
-    SELECT m.*
-    FROM misure_pianta m
-    INNER JOIN (
-        SELECT device_id, MAX(ts) AS max_ts
-        FROM misure_pianta
-        GROUP BY device_id
-    ) AS latest
-    ON m.device_id = latest.device_id AND m.ts = latest.max_ts
-    ORDER BY m.device_id ASC
-";
-
-$result = mysqli_query($conn, $query);
+// Recupera l'ultima misurazione per ogni pianta (per device_id)
 $piante = [];
+$devices_query = mysqli_query($conn, "SELECT DISTINCT device_id FROM misure_pianta");
 
-while ($row = mysqli_fetch_assoc($result)) {
-    $piante[] = $row;
+while ($dev = mysqli_fetch_assoc($devices_query)) {
+    $id = mysqli_real_escape_string($conn, $dev['device_id']);
+
+    $res = mysqli_query($conn, "
+        SELECT * FROM misure_pianta 
+        WHERE device_id = '$id' 
+        ORDER BY ts DESC 
+        LIMIT 1
+    ");
+
+    if ($row = mysqli_fetch_assoc($res)) {
+        $piante[] = $row;
+    }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="it">
 <head>
@@ -42,23 +40,19 @@ while ($row = mysqli_fetch_assoc($result)) {
       background: #f0f0f0;
       padding: 20px;
     }
-
     h1 {
       text-align: center;
     }
-
     .toolbar {
       text-align: center;
       margin-bottom: 20px;
     }
-
     .popolazione {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
       gap: 20px;
     }
-
     .card {
       background: #fff;
       border: 1px solid #ccc;
@@ -67,12 +61,10 @@ while ($row = mysqli_fetch_assoc($result)) {
       width: 250px;
       text-align: center;
     }
-
     .stato {
       font-size: 30px;
       margin-bottom: 10px;
     }
-
     a {
       text-decoration: none;
       color: blue;
@@ -92,6 +84,7 @@ while ($row = mysqli_fetch_assoc($result)) {
   <div class="popolazione">
     <?php foreach ($piante as $pianta): ?>
       <?php
+        // Recupera parametri soglia della specie
         $species = $pianta['species'];
         $params_query = mysqli_query($conn, "SELECT * FROM species_params WHERE species = '" . mysqli_real_escape_string($conn, $species) . "'");
         $parametri = mysqli_fetch_assoc($params_query);
@@ -99,28 +92,28 @@ while ($row = mysqli_fetch_assoc($result)) {
         $allarmi = [];
 
         if ($parametri) {
-            // Temperatura
+            // Valuta la temperatura
             if ($pianta['temperatura_c'] < $parametri['temp_min']) {
                 $allarmi[] = "❄️";
             } elseif ($pianta['temperatura_c'] > $parametri['temp_max']) {
                 $allarmi[] = "🔥";
             }
 
-            // Umidità aria
+            // Valuta umidità dell'aria
             if ($pianta['umidita_aria'] < $parametri['hum_air_min']) {
                 $allarmi[] = "🌬️";
             } elseif ($pianta['umidita_aria'] > $parametri['hum_air_max']) {
                 $allarmi[] = "💧";
             }
 
-            // Umidità suolo
+            // Valuta umidità del suolo
             if ($pianta['umidita_suolo'] < $parametri['soil_min']) {
                 $allarmi[] = "🌵";
             } elseif ($pianta['umidita_suolo'] > $parametri['soil_max']) {
                 $allarmi[] = "🌊";
             }
 
-            // Luce
+            // Valuta luce
             if ($pianta['luce_lux'] < $parametri['lux_min']) {
                 $allarmi[] = "🌑";
             } elseif ($pianta['luce_lux'] > $parametri['lux_max']) {
@@ -128,11 +121,13 @@ while ($row = mysqli_fetch_assoc($result)) {
             }
         }
 
+        // Se tutto è OK, mostra icona verde
         $stato = empty($allarmi) ? '🟢' : implode(' ', $allarmi);
       ?>
       <div class="card">
         <div class="stato"><?= $stato ?></div>
         <h3><?= htmlspecialchars($species) ?></h3>
+        <p><strong>Dispositivo:</strong><br><?= htmlspecialchars($pianta['device_id']) ?></p>
         <p><strong>Ultima lettura:</strong><br><?= htmlspecialchars($pianta['ts']) ?></p>
         <a href="grafico.php?device_id=<?= urlencode($pianta['device_id']) ?>">📈 Vedi grafici</a>
       </div>

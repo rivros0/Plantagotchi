@@ -21,7 +21,7 @@ const char* apiUrl   = "https://test0000.altervista.org/api/ingest.php";
 
 // Identificativo del dispositivo (max 40 caratteri) e nome pianta (max 60)
 const char* deviceId = "ptg-esp32-01";
-const char* species  = "Ocimum basilicum";  // es. basilico
+const char* species  = "Basilico";  // es. basilico
 
 // Pin utilizzati per i sensori
 const int dhtPin   = 26;  // Temperatura e umidità dell'aria

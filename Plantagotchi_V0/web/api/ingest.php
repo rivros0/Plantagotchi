@@ -1,12 +1,12 @@
 <?php
-// Configurazione DB (mysqli, procedurale, no PDO)
-require_once __DIR__ . '/config.php';
+// Connessione al DB (procedurale)
+require __DIR__ . '/config.php';
 
-// Recupera e decodifica i dati JSON dal body della richiesta
+// Acquisizione del corpo JSON ricevuto
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
 
-// Controlla che tutti i campi richiesti siano presenti
+// Verifica che tutti i campi richiesti siano presenti
 if (!$data || !isset(
     $data['temperatura_c'],
     $data['umidita_aria'],
@@ -17,42 +17,42 @@ if (!$data || !isset(
     $data['species']
 )) {
     http_response_code(400);
-    echo json_encode(["error" => "Payload incompleto"]);
+    echo json_encode(["error" => "Payload incompleto."]);
     exit;
 }
 
-// Sanitizzazione dei dati
-$temperatura = floatval($data['temperatura_c']);
-$umid_aria   = floatval($data['umidita_aria']);
-$umid_suolo  = intval($data['umidita_suolo']);
-$luce        = floatval($data['luce_lux']);
-$deviceId    = substr(trim($data['device_id']), 0, 40);
-$species     = substr(trim($data['species']),   0, 60);
+// Sanitizzazione e parsing
+$ts          = date('Y-m-d H:i:s', strtotime($data['ts']));
+$temp        = floatval($data['temperatura_c']);
+$hum_air     = floatval($data['umidita_aria']);
+$hum_soil    = intval($data['umidita_suolo']);
+$lux         = floatval($data['luce_lux']);
+$device_id   = substr(trim($data['device_id']), 0, 40);
+$species     = substr(trim($data['species']), 0, 60);
+$ip_client   = $_SERVER['REMOTE_ADDR'] ?? null;
 
-// Parsing del timestamp
-$ts_input = strtotime($data['ts']);
-$ts = $ts_input !== false ? date('Y-m-d H:i:s', $ts_input) : date('Y-m-d H:i:s');
-
-$ip = $_SERVER['REMOTE_ADDR'] ?? null;
-
-// Inserimento nel database
-$query = "INSERT INTO misure_pianta (ts, temperatura_c, umidita_aria, umidita_suolo, luce_lux, device_id, species, ip_client) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-$stmt = mysqli_prepare($conn, $query);
+// Preparazione e invio query (con prepared statement)
+$stmt = mysqli_prepare($conn, "
+  INSERT INTO misure_pianta (ts, temperatura_c, umidita_aria, umidita_suolo, luce_lux, device_id, species, ip_client)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+");
 
 if (!$stmt) {
     http_response_code(500);
-    echo json_encode(["error" => "Errore nella query DB"]);
+    echo json_encode(["error" => "Errore nella preparazione della query."]);
     exit;
 }
 
-mysqli_stmt_bind_param($stmt, "sdddiiss", $ts, $temperatura, $umid_aria, $umid_suolo, $luce, $deviceId, $species, $ip);
-mysqli_stmt_execute($stmt);
+// Binding dei parametri (t = testo, f = float, i = int, s = string)
+mysqli_stmt_bind_param($stmt, "sddidsss", $ts, $temp, $hum_air, $hum_soil, $lux, $device_id, $species, $ip_client);
+$ok = mysqli_stmt_execute($stmt);
 
-if (mysqli_stmt_affected_rows($stmt) > 0) {
+// Risposta finale
+if ($ok) {
     echo json_encode(["status" => "ok"]);
 } else {
     http_response_code(500);
-    echo json_encode(["error" => "Inserimento fallito"]);
+    echo json_encode(["error" => "Errore nell'inserimento dati."]);
 }
 
 mysqli_stmt_close($stmt);
