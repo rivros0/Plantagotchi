@@ -120,7 +120,7 @@ float readTemperature() { return dht.readTemperature(); }
 float readHumidity()    { return dht.readHumidity(); }
 float readLux() {
   int raw = analogRead(ldrPin);
-  return map(raw, 0, 1023, 0, 100);
+  return map(raw, 0, 4095, 100, 0);
 }
 int readSoilPct() {
   int raw = analogRead(soilPin);

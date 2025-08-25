@@ -1,134 +1,134 @@
 <?php
-session_start();
 require_once __DIR__ . '/../api/config.php';
+session_start();
 
-// 1) Accesso riservato: verifica sessione utente
+// Controllo accesso
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../index.php");
     exit;
 }
 
-// 2) Controllo parametro device_id
-if (!isset($_GET['device_id'])) {
-    echo "Parametro device_id mancante.";
-    exit;
+// Recupera il device_id dalla query string
+$deviceId = $_GET['device_id'] ?? null;
+if (!$deviceId) {
+    die("Device non specificato.");
 }
-$device_id = mysqli_real_escape_string($conn, $_GET['device_id']);
 
-// 3) Recupera ultime 100 misurazioni (cronologiche) per la pianta
+// Sanifica device_id e recupera dati dal DB
+$deviceIdSql = mysqli_real_escape_string($conn, $deviceId);
 $query = "
     SELECT ts, temperatura_c, umidita_aria, umidita_suolo, luce_lux
     FROM misure_pianta
-    WHERE device_id = '$device_id'
-    ORDER BY ts DESC
-    LIMIT 100
+    WHERE device_id = '$deviceIdSql'
+    ORDER BY ts ASC
 ";
-$result = mysqli_query($conn, $query);
-$misure = [];
-while ($row = mysqli_fetch_assoc($result)) {
-    $misure[] = $row;
-}
-$misure = array_reverse($misure);  // ordina per data crescente
 
-// 4) Prepara gli array per i grafici (labels e dataset)
-$labels   = []; $temp = []; $hum_air = []; $hum_soil = []; $lux = [];
-foreach ($misure as $m) {
-    $labels[]    = $m['ts'];
-    $temp[]      = $m['temperatura_c'];
-    $hum_air[]   = $m['umidita_aria'];
-    $hum_soil[]  = $m['umidita_suolo'];
-    $lux[]       = $m['luce_lux'];
+$result = mysqli_query($conn, $query);
+
+$labels = [];
+$temp = [];
+$hum = [];
+$soil = [];
+$lux = [];
+
+while ($row = mysqli_fetch_assoc($result)) {
+    // etichetta temporale in formato "gg/mm HH:MM"
+    $labels[] = date("d/m H:i", strtotime($row['ts']));
+    $temp[] = $row['temperatura_c'];
+    $hum[] = $row['umidita_aria'];
+    $soil[] = $row['umidita_suolo'];
+    $lux[] = $row['luce_lux'];
 }
+
+// Conversione in JSON per uso JS
+$jsonLabels = json_encode($labels);
+$jsonTemp = json_encode($temp);
+$jsonHum = json_encode($hum);
+$jsonSoil = json_encode($soil);
+$jsonLux = json_encode($lux);
 ?>
+
 <!DOCTYPE html>
 <html lang="it">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Grafici – <?= htmlspecialchars($device_id) ?></title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>📈 Grafici - <?= htmlspecialchars($deviceId) ?></title>
+  <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body {
-      font-family: sans-serif;
-      background: #f9f9f9;
-      margin: 20px;
-      text-align: center;
-    }
-    h1 {
-      margin-bottom: 10px;
-    }
-    .chart-container {
-      width: 95%;
-      max-width: 800px;
-      margin: 30px auto;
-    }
-    a {
-      color: #0077cc;
-      text-decoration: none;
-      display: inline-block;
-      margin-bottom: 20px;
-    }
-  </style>
 </head>
 <body>
-  <h1>Grafici per <?= htmlspecialchars($device_id) ?></h1>
-  <a href="dashboard.php">← Torna alla Dashboard</a>
 
-  <!-- 5) Layout dei grafici -->
-  <div class="chart-container"><canvas id="chartTemp"></canvas></div>
-  <div class="chart-container"><canvas id="chartHum"></canvas></div>
-  <div class="chart-container"><canvas id="chartSoil"></canvas></div>
-  <div class="chart-container"><canvas id="chartLux"></canvas></div>
+  <header>
+    <h1>📈 Andamento Pianta - <?= htmlspecialchars($deviceId) ?></h1>
+    <nav>
+      <a href="dashboard.php">🔙 Torna alla dashboard</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="grafico-box">
+      <canvas id="graficoTemp"></canvas>
+      <canvas id="graficoHum"></canvas>
+      <canvas id="graficoSoil"></canvas>
+      <canvas id="graficoLux"></canvas>
+    </div>
+  </main>
 
   <script>
-    // Dati passati da PHP a JavaScript
-    const labels = <?= json_encode($labels) ?>;
-    const dataTemp = <?= json_encode($temp) ?>;
-    const dataHumAir = <?= json_encode($hum_air) ?>;
-    const dataSoil = <?= json_encode($hum_soil) ?>;
-    const dataLux = <?= json_encode($lux) ?>;
+    // Dati ricevuti dal backend PHP
+    const labels = <?= $jsonLabels ?>;
+    const dataTemp = <?= $jsonTemp ?>;
+    const dataHum = <?= $jsonHum ?>;
+    const dataSoil = <?= $jsonSoil ?>;
+    const dataLux = <?= $jsonLux ?>;
 
-    // Funzione helper per creare un grafico con griglia sull'asse X
-    function makeChart(canvasId, label, data, color) {
-      new Chart(document.getElementById(canvasId), {
+    // Funzione generica per creare un grafico
+    function creaGrafico(id, label, data, colore) {
+      new Chart(document.getElementById(id), {
         type: 'line',
         data: {
           labels: labels,
           datasets: [{
             label: label,
             data: data,
-            borderColor: color,
-            backgroundColor: color + '33',
-            fill: true,
-            tension: 0.3,
-            pointRadius: 2
+            borderColor: colore,
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3
           }]
         },
         options: {
-          responsive: true,
-          plugins: {
-            legend: { display: true }
-          },
           scales: {
             x: {
-              display: true,
-              title: { display: true, text: 'Data/Ora' },
-              grid: { display: true },
-              ticks: { autoSkip: true, maxTicksLimit: 10 }
+              ticks: {
+                maxTicksLimit: 10,
+                callback: (value, index, ticks) => labels[index] // formato leggibile
+              }
             },
             y: {
-              grid: { display: true }
+              beginAtZero: false
+            }
+          },
+          responsive: true,
+          plugins: {
+            legend: {
+              display: true
+            },
+            title: {
+              display: false
             }
           }
         }
       });
     }
 
-    // 6) Creazione dei grafici con palette distinta
-    makeChart('chartTemp', 'Temperatura (°C)', dataTemp, '#e74c3c');
-    makeChart('chartHum', 'Umidità Aria (%)', dataHumAir, '#3498db');
-    makeChart('chartSoil', 'Umidità Suolo (%)', dataSoil, '#27ae60');
-    makeChart('chartLux', 'Luce (lux)', dataLux, '#f39c12');
+    // Creazione dei singoli grafici
+    creaGrafico("graficoTemp", "Temperatura (°C)", dataTemp, "#f44336");
+    creaGrafico("graficoHum", "Umidità Aria (%)", dataHum, "#2196f3");
+    creaGrafico("graficoSoil", "Umidità Suolo (%)", dataSoil, "#4caf50");
+    creaGrafico("graficoLux", "Luce (lux)", dataLux, "#ff9800");
   </script>
+
 </body>
 </html>
