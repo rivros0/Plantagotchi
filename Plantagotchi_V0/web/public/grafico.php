@@ -2,133 +2,147 @@
 require_once __DIR__ . '/../api/config.php';
 session_start();
 
-// Controllo accesso
+// Verifica accesso
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../index.php");
     exit;
 }
 
-// Recupera il device_id dalla query string
-$deviceId = $_GET['device_id'] ?? null;
-if (!$deviceId) {
-    die("Device non specificato.");
+// Verifica parametro
+if (!isset($_GET['device_id'])) {
+    echo "Dispositivo non specificato.";
+    exit;
 }
 
-// Sanifica device_id e recupera dati dal DB
-$deviceIdSql = mysqli_real_escape_string($conn, $deviceId);
-$query = "
-    SELECT ts, temperatura_c, umidita_aria, umidita_suolo, luce_lux
-    FROM misure_pianta
-    WHERE device_id = '$deviceIdSql'
-    ORDER BY ts ASC
-";
+$device_id = mysqli_real_escape_string($conn, $_GET['device_id']);
 
+// Recupera ultime 50 misurazioni
+$query = "SELECT * FROM misure_pianta WHERE device_id = '$device_id' ORDER BY ts DESC LIMIT 50";
 $result = mysqli_query($conn, $query);
 
-$labels = [];
-$temp = [];
-$hum = [];
-$soil = [];
-$lux = [];
+$ts = $temp = $hum = $soil = $lux = [];
 
 while ($row = mysqli_fetch_assoc($result)) {
-    // etichetta temporale in formato "gg/mm HH:MM"
-    $labels[] = date("d/m H:i", strtotime($row['ts']));
-    $temp[] = $row['temperatura_c'];
-    $hum[] = $row['umidita_aria'];
-    $soil[] = $row['umidita_suolo'];
-    $lux[] = $row['luce_lux'];
+    array_unshift($ts, $row['ts']);
+    array_unshift($temp, $row['temperatura_c']);
+    array_unshift($hum, $row['umidita_aria']);
+    array_unshift($soil, $row['umidita_suolo']);
+    array_unshift($lux, $row['luce_lux']);
 }
 
-// Conversione in JSON per uso JS
-$jsonLabels = json_encode($labels);
-$jsonTemp = json_encode($temp);
-$jsonHum = json_encode($hum);
-$jsonSoil = json_encode($soil);
-$jsonLux = json_encode($lux);
-?>
+// Recupera specie associata
+$specie_q = mysqli_query($conn, "SELECT species FROM misure_pianta WHERE device_id = '$device_id' ORDER BY ts DESC LIMIT 1");
+$specie = ($row = mysqli_fetch_assoc($specie_q)) ? $row['species'] : 'Sconosciuta';
 
+// Recupera parametri della specie
+$ref_q = mysqli_query($conn, "SELECT * FROM species_params WHERE species = '" . mysqli_real_escape_string($conn, $specie) . "'");
+$ref = mysqli_fetch_assoc($ref_q);
+?>
 <!DOCTYPE html>
 <html lang="it">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>📈 Grafici - <?= htmlspecialchars($deviceId) ?></title>
+  <title>Grafici - <?= htmlspecialchars($device_id) ?></title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
-  <header>
-    <h1>📈 Andamento Pianta - <?= htmlspecialchars($deviceId) ?></h1>
-    <nav>
-      <a href="dashboard.php">🔙 Torna alla dashboard</a>
-    </nav>
-  </header>
+<header>
+  <h1>📈 Grafici per <?= htmlspecialchars($device_id) ?></h1>
+  <nav><a href="dashboard.php">🔙 Torna alla Dashboard</a></nav>
+</header>
 
-  <main>
-    <div class="grafico-box">
-      <canvas id="graficoTemp"></canvas>
-      <canvas id="graficoHum"></canvas>
-      <canvas id="graficoSoil"></canvas>
-      <canvas id="graficoLux"></canvas>
-    </div>
-  </main>
+<main class="container">
 
-  <script>
-    // Dati ricevuti dal backend PHP
-    const labels = <?= $jsonLabels ?>;
-    const dataTemp = <?= $jsonTemp ?>;
-    const dataHum = <?= $jsonHum ?>;
-    const dataSoil = <?= $jsonSoil ?>;
-    const dataLux = <?= $jsonLux ?>;
+  <!-- Temperatura -->
+  <div class="chart-container">
+    <div class="chart-title">🌡️ Temperatura (°C)</div>
+    <canvas id="tempChart"></canvas>
+  </div>
 
-    // Funzione generica per creare un grafico
-    function creaGrafico(id, label, data, colore) {
-      new Chart(document.getElementById(id), {
-        type: 'line',
-        data: {
-          labels: labels,
-          datasets: [{
-            label: label,
-            data: data,
-            borderColor: colore,
-            borderWidth: 2,
-            fill: false,
-            tension: 0.3
-          }]
-        },
-        options: {
-          scales: {
-            x: {
-              ticks: {
-                maxTicksLimit: 10,
-                callback: (value, index, ticks) => labels[index] // formato leggibile
-              }
-            },
-            y: {
-              beginAtZero: false
-            }
-          },
-          responsive: true,
-          plugins: {
-            legend: {
-              display: true
-            },
-            title: {
-              display: false
-            }
-          }
-        }
-      });
+  <!-- Umidità Aria -->
+  <div class="chart-container">
+    <div class="chart-title">💧 Umidità Aria (%)</div>
+    <canvas id="humChart"></canvas>
+  </div>
+
+  <!-- Umidità Suolo -->
+  <div class="chart-container">
+    <div class="chart-title">🌱 Umidità Suolo (%)</div>
+    <canvas id="soilChart"></canvas>
+  </div>
+
+  <!-- Luce -->
+  <div class="chart-container">
+    <div class="chart-title">☀️ Luce (lux)</div>
+    <canvas id="luxChart"></canvas>
+  </div>
+
+</main>
+
+<script>
+const labels = <?= json_encode($ts) ?>;
+
+const commonOptions = {
+  responsive: true,
+  plugins: {
+    legend: { display: false }
+  },
+  scales: {
+    x: {
+      ticks: { font: { size: 14 }, color: '#444' },
+      grid: { color: '#ddd' }
+    },
+    y: {
+      ticks: { font: { size: 14 }, color: '#444' },
+      grid: { color: '#ddd' }
     }
+  }
+};
 
-    // Creazione dei singoli grafici
-    creaGrafico("graficoTemp", "Temperatura (°C)", dataTemp, "#f44336");
-    creaGrafico("graficoHum", "Umidità Aria (%)", dataHum, "#2196f3");
-    creaGrafico("graficoSoil", "Umidità Suolo (%)", dataSoil, "#4caf50");
-    creaGrafico("graficoLux", "Luce (lux)", dataLux, "#ff9800");
-  </script>
+function createChart(id, label, data, color, min=null, max=null) {
+  new Chart(document.getElementById(id), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: label,
+          data: data,
+          borderColor: color,
+          backgroundColor: color + '22',
+          tension: 0.3,
+          fill: true
+        },
+        ...(min !== null && max !== null ? [
+          {
+            label: 'Min',
+            data: Array(data.length).fill(min),
+            borderDash: [4, 4],
+            borderColor: '#88e0f06b',
+            pointRadius: 0
+          },
+          {
+            label: 'Max',
+            data: Array(data.length).fill(max),
+            borderDash: [4, 4],
+            borderColor: '#8b0b0bff',
+            pointRadius: 0
+          }
+        ] : [])
+      ]
+    },
+    options: commonOptions
+  });
+}
+
+// Genera i grafici con parametri di riferimento, se disponibili
+createChart("tempChart", "Temperatura", <?= json_encode($temp) ?>, "#e74c3c", <?= $ref['temp_min'] ?? 'null' ?>, <?= $ref['temp_max'] ?? 'null' ?>);
+createChart("humChart", "Umidità Aria", <?= json_encode($hum) ?>, "#3498db", <?= $ref['hum_air_min'] ?? 'null' ?>, <?= $ref['hum_air_max'] ?? 'null' ?>);
+createChart("soilChart", "Umidità Suolo", <?= json_encode($soil) ?>, "#2ecc71", <?= $ref['soil_min'] ?? 'null' ?>, <?= $ref['soil_max'] ?? 'null' ?>);
+createChart("luxChart", "Luce", <?= json_encode($lux) ?>, "#f1c40f", <?= $ref['lux_min'] ?? 'null' ?>, <?= $ref['lux_max'] ?? 'null' ?>);
+</script>
 
 </body>
 </html>

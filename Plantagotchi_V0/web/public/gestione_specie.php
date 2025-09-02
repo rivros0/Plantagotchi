@@ -10,7 +10,7 @@ if (!isset($_SESSION['user_id'])) {
 
 // Aggiungi specie
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nuova_specie'])) {
-    $specie = trim($_POST['species']);
+    $specie = trim($_POST['specie']);
     $temp_min = floatval($_POST['temp_min']);
     $temp_max = floatval($_POST['temp_max']);
     $hum_air_min = floatval($_POST['hum_air_min']);
@@ -63,21 +63,39 @@ $specie_result = mysqli_query($conn, "SELECT * FROM species_params ORDER BY spec
 
     <!-- FORM AGGIUNTA NUOVA SPECIE -->
     <section class="box">
-      <h2>➕ Aggiungi nuova specie</h2>
+      <h2> Aggiungi nuova specie</h2>
       <form method="post">
-        <input type="hidden" name="nuova_specie" value="1">
-        <div class="grid-2col">
-          <label>Nome specie: <input type="text" name="species" required></label>
-          <label>Temperatura min °C: <input type="number" name="temp_min" step="0.1" required></label>
-          <label>Temperatura max °C: <input type="number" name="temp_max" step="0.1" required></label>
-          <label>Umidità aria min %: <input type="number" name="hum_air_min" step="0.1" required></label>
-          <label>Umidità aria max %: <input type="number" name="hum_air_max" step="0.1" required></label>
-          <label>Umidità suolo min %: <input type="number" name="soil_min" required></label>
-          <label>Umidità suolo max %: <input type="number" name="soil_max" required></label>
-          <label>Luce min lux: <input type="number" name="lux_min" step="0.1" required></label>
-          <label>Luce max lux: <input type="number" name="lux_max" step="0.1" required></label>
-        </div>
-        <button type="submit">Salva specie</button>
+         <table>
+          <tr>
+            <td><label for="nome">Nome specie:</label></td>
+            <td colspan="2"><input type="text" name="specie" id="specie" required></td>
+          </tr>
+          <tr>
+            <td>Temperatura (°C)</td>
+            <td><input type="number" name="temp_min" step="0.1" placeholder="Min" required></td>
+            <td><input type="number" name="temp_max" step="0.1" placeholder="Max" required></td>
+          </tr>
+          <tr>
+            <td>Umidità aria (%)</td>
+            <td><input type="number" name="hum_air_min" step="1" placeholder="Min" required></td>
+            <td><input type="number" name="hum_air_max" step="1" placeholder="Max" required></td>
+          </tr>
+          <tr>
+            <td>Umidità suolo (%)</td>
+            <td><input type="number" name="soil_min" step="1" placeholder="Min" required></td>
+            <td><input type="number" name="soil_max" step="1" placeholder="Max" required></td>
+          </tr>
+          <tr>
+            <td>Luce (lux)</td>
+            <td><input type="number" name="lux_min" step="1" placeholder="Min" required></td>
+            <td><input type="number" name="lux_max" step="1" placeholder="Max" required></td>
+          </tr>
+          <tr>
+            <td colspan="3" style="text-align:center">
+              <button type="submit" name="nuova_specie">Inserisci</button>
+            </td>
+          </tr>
+        </table>
       </form>
     </section>
 

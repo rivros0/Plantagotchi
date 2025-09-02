@@ -45,6 +45,8 @@ const unsigned long postIntervalMs = 60000;
 unsigned long lastLog = 0;
 unsigned long lastPost = 0;
 
+
+
 DHT dht(dhtPin, DHT22);
 
 // === CONNESSIONE AL MIGLIOR WIFI DISPONIBILE === //
