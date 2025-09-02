@@ -126,8 +126,8 @@ float readLux() {
 }
 int readSoilPct() {
   int raw = analogRead(soilPin);
-  int pct = map(raw, 3200, 1200, 0, 100);
-  return constrain(pct, 0, 100);
+  int pct = map(raw, 0, 4095, 100);
+  return pct;
 }
 
 void logData(float t, float h, float lux, int soil, String ts) {
