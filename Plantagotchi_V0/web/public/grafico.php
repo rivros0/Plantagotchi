@@ -75,7 +75,7 @@ $ref = mysqli_fetch_assoc($ref_q);
 
   <!-- Luce -->
   <div class="chart-container">
-    <div class="chart-title">☀️ Luce (lux)</div>
+    <div class="chart-title">☀️ Luce (%)</div>
     <canvas id="luxChart"></canvas>
   </div>
 
@@ -120,7 +120,7 @@ function createChart(id, label, data, color, min=null, max=null) {
             label: 'Min',
             data: Array(data.length).fill(min),
             borderDash: [4, 4],
-            borderColor: '#88e0f06b',
+            borderColor: '#168d876b',
             pointRadius: 0
           },
           {

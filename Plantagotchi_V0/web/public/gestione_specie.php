@@ -2,13 +2,13 @@
 require_once __DIR__ . '/../api/config.php';
 session_start();
 
-// Verifica accesso utente
+// ✅ Verifica accesso utente
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../index.php");
     exit;
 }
 
-// Aggiungi specie
+// ✅ Aggiungi nuova specie (form inviato)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nuova_specie'])) {
     $specie = trim($_POST['specie']);
     $temp_min = floatval($_POST['temp_min']);
@@ -21,17 +21,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nuova_specie'])) {
     $lux_max = floatval($_POST['lux_max']);
 
     if (!empty($specie)) {
-        $stmt = mysqli_prepare($conn, "INSERT INTO species_params (species, temp_min, temp_max, hum_air_min, hum_air_max, soil_min, soil_max, lux_min, lux_max)
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        mysqli_stmt_bind_param($stmt, 'sddddii dd', $specie, $temp_min, $temp_max, $hum_air_min, $hum_air_max, $soil_min, $soil_max, $lux_min, $lux_max);
-        mysqli_stmt_execute($stmt);
-        mysqli_stmt_close($stmt);
+        $stmt = mysqli_prepare($conn, "
+            INSERT INTO species_params (species, temp_min, temp_max, hum_air_min, hum_air_max, soil_min, soil_max, lux_min, lux_max)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        if ($stmt) {
+            // ✅ Corretto il formato dei parametri ('sddddiidd' senza spazi)
+            mysqli_stmt_bind_param($stmt, 'sddddiidd',
+                $specie, $temp_min, $temp_max,
+                $hum_air_min, $hum_air_max,
+                $soil_min, $soil_max,
+                $lux_min, $lux_max
+            );
+            mysqli_stmt_execute($stmt);
+            mysqli_stmt_close($stmt);
+        } else {
+            die("Errore nella preparazione della query: " . mysqli_error($conn));
+        }
+
         header("Location: gestione_specie.php");
         exit;
     }
 }
 
-// Elimina specie
+// ✅ Elimina specie se richiesto
 if (isset($_GET['elimina'])) {
     $id = intval($_GET['elimina']);
     mysqli_query($conn, "DELETE FROM species_params WHERE id = $id");
@@ -39,7 +52,7 @@ if (isset($_GET['elimina'])) {
     exit;
 }
 
-// Recupera elenco delle specie
+// ✅ Recupera elenco delle specie già registrate
 $specie_result = mysqli_query($conn, "SELECT * FROM species_params ORDER BY species ASC");
 ?>
 
@@ -61,15 +74,18 @@ $specie_result = mysqli_query($conn, "SELECT * FROM species_params ORDER BY spec
 
   <main class="container">
 
-    <!-- FORM AGGIUNTA NUOVA SPECIE -->
+    <!-- ✅ FORM PER AGGIUNGERE NUOVA SPECIE -->
     <section class="box">
-      <h2> Aggiungi nuova specie</h2>
+      <h2>Aggiungi nuova specie</h2>
       <form method="post">
-         <table>
+        <table>
+          <!-- Nome specie: riga singola -->
           <tr>
-            <td><label for="nome">Nome specie:</label></td>
+            <td><label for="specie">Nome specie:</label></td>
             <td colspan="2"><input type="text" name="specie" id="specie" required></td>
           </tr>
+
+          <!-- Parametri min/max su righe separate -->
           <tr>
             <td>Temperatura (°C)</td>
             <td><input type="number" name="temp_min" step="0.1" placeholder="Min" required></td>
@@ -92,14 +108,14 @@ $specie_result = mysqli_query($conn, "SELECT * FROM species_params ORDER BY spec
           </tr>
           <tr>
             <td colspan="3" style="text-align:center">
-              <button type="submit" name="nuova_specie">Inserisci</button>
+              <button type="submit" name="nuova_specie">➕ Inserisci</button>
             </td>
           </tr>
         </table>
       </form>
     </section>
 
-    <!-- TABELLA SPECIE REGISTRATE -->
+    <!-- ✅ TABELLA DELLE SPECIE REGISTRATE -->
     <section class="box">
       <h2>📋 Elenco specie registrate</h2>
       <table>
