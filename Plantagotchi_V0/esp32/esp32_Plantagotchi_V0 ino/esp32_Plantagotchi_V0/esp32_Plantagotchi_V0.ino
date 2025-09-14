@@ -126,7 +126,7 @@ float readLux() {
 }
 int readSoilPct() {
   int raw = analogRead(soilPin);
-  int pct = map(raw, 0, 4095, 100,0);
+  int pct = map(raw, 0, 4095, 100);
   return pct;
 }
 

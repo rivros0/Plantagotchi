@@ -1,17 +1,10 @@
-/* ========================================================
-   RESET DI BASE
-   Rimuove margini/padding predefiniti e imposta box-sizing
-======================================================== */
+/* === Reset base === */
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-/* ========================================================
-   BODY E TESTI GENERALI
-   Font, colori e impaginazione di base del sito
-======================================================== */
 body {
   font-family: "Segoe UI", sans-serif;
   background-color: #f2f9f2;
@@ -20,9 +13,7 @@ body {
   padding: 20px;
 }
 
-/* ========================================================
-   HEADER E NAVIGAZIONE
-======================================================== */
+/* === Layout generale === */
 header {
   text-align: center;
   margin-bottom: 30px;
@@ -45,34 +36,24 @@ nav a:hover {
   color: #457b9d;
 }
 
-/* ========================================================
-   LAYOUT GENERALE
-======================================================== */
+/* === Contenitore principale === */
 .container {
   max-width: 1000px;
   margin: 0 auto;
 }
 
-/* Box con bordo e ombreggiatura */
+/* === Box con bordo ombreggiato === */
 .box {
   background-color: #fff;
   padding: 20px;
   margin-bottom: 30px;
   border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
 }
 
-/* ========================================================
-   FORM E INPUT
-======================================================== */
+/* === Form === */
 form {
   margin-top: 15px;
-}
-
-label {
-  display: block;
-  margin-bottom: 12px;
-  font-weight: 500;
 }
 
 input[type="text"],
@@ -86,7 +67,12 @@ input[type="email"] {
   border-radius: 4px;
 }
 
-/* Pulsante generico */
+label {
+  display: block;
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
 button {
   padding: 10px 16px;
   background-color: #2a9d8f;
@@ -101,9 +87,7 @@ button:hover {
   background-color: #21867a;
 }
 
-/* ========================================================
-   TABELLE
-======================================================== */
+/* === Tabelle === */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -132,9 +116,7 @@ table td a:hover {
   color: #1f6f64;
 }
 
-/* ========================================================
-   DASHBOARD – CARD DELLE PIANTE
-======================================================== */
+/* === Dashboard card === */
 .popolazione {
   display: flex;
   flex-wrap: wrap;
@@ -149,7 +131,7 @@ table td a:hover {
   border-radius: 8px;
   padding: 15px;
   text-align: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
 }
 
 .card .stato {
@@ -174,6 +156,7 @@ table td a:hover {
   color: #457b9d;
 }
 
+<<<<<<< HEAD
 .messaggi-warning {
   font-size: 0.85rem;
   color: #1b0505;
@@ -188,25 +171,23 @@ table td a:hover {
 /* ========================================================
    GRIGLIA 2 COLONNE (es. per dashboard o gestione specie)
 ======================================================== */
+=======
+/* === Griglia 2 colonne === */
+>>>>>>> parent of c09677e (migliorato stylecss)
 .grid-2col {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 15px;
 }
 
-/* ========================================================
-   GRAFICI (Chart.js)
-======================================================== */
-
-/* Contenitore di ogni grafico */
-.chart-container {
-  max-width: 900px;
-  margin: 40px auto 30px;
-  padding: 20px;
-  background: #f9f9f9;
-  border-radius: 10px;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+/* === Grafico === */
+canvas {
+  max-width: 100%;
+  height: auto;
+  margin-top: 20px;
 }
+
+/* === GRAFICI (Chart.js) === */
 
 /* Titolo sopra ogni grafico */
 .chart-title {
@@ -217,19 +198,29 @@ table td a:hover {
   color: #333;
 }
 
+/* Container per ogni grafico */
+.chart-container {
+  max-width: 900px;
+  margin: 30px auto;
+  padding: 20px;
+  margin-top: 40px; /* spazio extra sopra il titolo del grafico */
+  background: #f9f9f9;
+  border-radius: 10px;
+  box-shadow: 0 0 5px rgba(0,0,0,0.1);
+}
+
 /* Canvas con padding per evitare tagli */
 .chart-container canvas {
   padding: 10px;
 }
 
-/* Ingrandimento dei caratteri negli assi */
+/* Ingrandimento delle etichette degli assi */
 canvas {
   font-size: 14px !important;
 }
 
-/* ========================================================
-   RESPONSIVE DESIGN – MOBILE FRIENDLY
-======================================================== */
+
+/* === Responsive === */
 @media (max-width: 600px) {
   body {
     padding: 10px;
