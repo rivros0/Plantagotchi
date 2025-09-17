@@ -1,0 +1,29 @@
+project-root/
+├── index.php                   # Punto di ingresso, include bootstrap e redirect
+├── /public
+│   ├── style.css               # Foglio di stile globale
+│   ├── grafico.php             # Mostra grafici della singola pianta
+│   ├── dashboard.php           # Visualizza tutte le piante
+│   ├── gestione_specie.php     # Gestione dei parametri delle specie
+│   ├── logout.php              # Logout utente
+│   ├── /api
+│   │   ├── ingest.php          # API ricezione dati
+│   │   ├── get_comando.php     # API per richiesta comando ESP32
+│   │   └── ...
+├── /src
+│   ├── auth.php                # Login e session management
+│   ├── db.php                  # Funzioni di accesso DB
+│   ├── species_logic.php       # Logica di verifica parametri
+│   └── utils.php               # Funzioni comuni (es. formattazione date)
+├── /templates
+│   ├── header.php              # Header e apertura HTML
+│   ├── footer.php              # Footer e chiusura HTML
+│   ├── login_form.php          # Form di login
+│   └── species_form.php        # Form gestione specie
+├── /config
+│   └── config.php              # Credenziali DB e costanti
+├── /logs
+│   └── log_ingest.txt          # Log richieste API
+└── README.md
+
+
