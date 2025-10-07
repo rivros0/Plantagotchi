@@ -1,5 +1,5 @@
 project-root/
-├── index.php                   # Punto di ingresso, include bootstrap e redirect
+├── index.php                   # Punto di ingresso
 ├── /public
 │   ├── style.css               # Foglio di stile globale
 │   ├── grafico.php             # Mostra grafici della singola pianta
